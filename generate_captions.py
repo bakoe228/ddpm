@@ -1,26 +1,30 @@
 import os
+import argparse
 import torch
 import gc
 from PIL import Image
 from tqdm import tqdm
 
-# 1. Заглушка проверки импортов HuggingFace (обход flash_attn на Windows)
 import transformers.dynamic_module_utils
 transformers.dynamic_module_utils.check_imports = lambda filename: []
 
-# 2. Заглушка для ошибки forced_bos_token_id
 import transformers.configuration_utils
 if not hasattr(transformers.configuration_utils.PretrainedConfig, "forced_bos_token_id"):
     setattr(transformers.configuration_utils.PretrainedConfig, "forced_bos_token_id", None)
 
 from transformers import AutoProcessor, AutoModelForCausalLM
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-IMG_DIR = "D:/datasets/val2017"
-MODEL_ID = 'microsoft/Florence-2-large'
-BATCH_SIZE = 32  # Подняли батч до 32 для максимального утилизирования GPU
+parser = argparse.ArgumentParser(description="Generate Captions using Florence-2")
+parser.add_argument("--img_dir", type=str, default="./data", help="Путь к изображениям")
+parser.add_argument("--batch_size", type=int, default=32, help="Размер батча")
+args = parser.parse_args()
 
-print(f"Загрузка Florence-2-large на {DEVICE} (ТУРБО BATCH={BATCH_SIZE})...")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+IMG_DIR = os.path.abspath(args.img_dir)
+MODEL_ID = 'microsoft/Florence-2-large'
+BATCH_SIZE = args.batch_size
+
+print(f"Загрузка Florence-2-large на {DEVICE} (BATCH={BATCH_SIZE})...")
 
 processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
@@ -34,7 +38,6 @@ model.eval()
 
 valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')
 
-# Сбор всех неразмеченных картинок
 all_image_paths = []
 for root, _, files in os.walk(IMG_DIR):
     for file in files:
@@ -76,7 +79,7 @@ for step, batch_paths in enumerate(tqdm(batches, desc="Florence-2 Turbo Captioni
     try:
         inputs = processor(text=[PROMPT] * len(images), images=images, return_tensors="pt", padding=True).to(DEVICE, torch.float16)
         
-        with torch.inference_mode(): # Быстрее чем no_grad
+        with torch.inference_mode():
             generated_ids = model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs["pixel_values"],
