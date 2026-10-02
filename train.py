@@ -81,12 +81,11 @@ def main():
     parser = argparse.ArgumentParser(description="DDPM Training Script")
     parser.add_argument("--data_dir", type=str, default="./data", help="Путь к датасету")
     parser.add_argument("--save_dir", type=str, default=".", help="Папка для сохранения чекпоинтов")
-    parser.add_argument("--epochs", type=int, default=1, help="Количество эпох")
+    parser.add_argument("--epochs", type=int, default=6, help="Количество эпох")
     parser.add_argument("--batch_size", type=int, default=8, help="Размер батча")
     parser.add_argument("--mode", type=str, default=None, choices=["1", "2", "3"], help="Режим обучения (1, 2 или 3)")
     args = parser.parse_args()
 
-    # Относительный путь от корня проекта по умолчанию
     data_dir = args.data_dir
     if not os.path.isabs(data_dir):
         data_dir = os.path.abspath(data_dir)
@@ -95,7 +94,6 @@ def main():
         print(f"Ошибка: Папка {data_dir} не найдена!")
         return
 
-    # Директория для хранения чекпоинтов
     save_dir = args.save_dir
     os.makedirs(save_dir, exist_ok=True)
 
@@ -116,9 +114,9 @@ def main():
         dataset, 
         batch_size=args.batch_size,
         shuffle=True, 
-        num_workers=2,
+        num_workers=4 if DEVICE == "cuda" else 0,
         pin_memory=True if DEVICE == "cuda" else False,
-        persistent_workers=True
+        persistent_workers=True if DEVICE == "cuda" else False
     )
 
     conditioner = TextConditioner().to(DEVICE)
@@ -151,7 +149,7 @@ def main():
             )
             
             for batch in pbar:
-                imgs_gpu = batch["image"].to(DEVICE)
+                imgs_gpu = batch["image"].to(DEVICE, non_blocking=True)
                 low_res = resize_gpu(imgs_gpu, 64)
                 
                 with torch.amp.autocast('cuda', enabled=(DEVICE == "cuda")):
@@ -190,7 +188,7 @@ def main():
             )
             
             for batch in pbar:
-                high_res = batch["image"].to(DEVICE)
+                high_res = batch["image"].to(DEVICE, non_blocking=True)
                 low_res = resize_gpu(high_res, 64)
 
                 with torch.amp.autocast('cuda', enabled=(DEVICE == "cuda")):
