@@ -80,6 +80,7 @@ def resize_gpu(tensor: torch.Tensor, size: int) -> torch.Tensor:
 def main():
     parser = argparse.ArgumentParser(description="DDPM Training Script")
     parser.add_argument("--data_dir", type=str, default="./data", help="Путь к датасету")
+    parser.add_argument("--save_dir", type=str, default=".", help="Папка для сохранения чекпоинтов")
     parser.add_argument("--epochs", type=int, default=1, help="Количество эпох")
     parser.add_argument("--batch_size", type=int, default=8, help="Размер батча")
     parser.add_argument("--mode", type=str, default=None, choices=["1", "2", "3"], help="Режим обучения (1, 2 или 3)")
@@ -93,6 +94,13 @@ def main():
     if not os.path.exists(data_dir):
         print(f"Ошибка: Папка {data_dir} не найдена!")
         return
+
+    # Директория для хранения чекпоинтов
+    save_dir = args.save_dir
+    os.makedirs(save_dir, exist_ok=True)
+
+    base_ckpt_path = os.path.join(save_dir, "base_unet_checkpoint.pt")
+    upscaler_ckpt_path = os.path.join(save_dir, "upscaler_unet_checkpoint.pt")
 
     choice = args.mode
     if not choice:
@@ -125,9 +133,9 @@ def main():
 
     # 1. Base UNet (64x64)
     if choice in ("1", "3"):
-        if os.path.exists("base_unet_checkpoint.pt"):
-            print("\nЗагрузка существующего чекпоинта Base UNet...")
-            base_model.load_state_dict(torch.load("base_unet_checkpoint.pt", map_location=DEVICE))
+        if os.path.exists(base_ckpt_path):
+            print(f"\nЗагрузка существующего чекпоинта Base UNet из {base_ckpt_path}...")
+            base_model.load_state_dict(torch.load(base_ckpt_path, map_location=DEVICE))
 
         print("\nСтарт Этапа 1: Обучение Base UNet (64x64)...")
         base_epochs = args.epochs
@@ -157,15 +165,16 @@ def main():
             avg_loss = running_loss / len(dataloader)
             print(f" Эпоха {epoch+1}/{base_epochs} завершена за {format_time(epoch_elapsed)} | Средний Base Loss: {avg_loss:.4f}")
             
-            torch.save(base_model.state_dict(), "base_unet_checkpoint.pt")
+            torch.save(base_model.state_dict(), base_ckpt_path)
+            print(f"Сохранён чекпоинт: {base_ckpt_path}")
             torch.cuda.empty_cache()
             gc.collect()
 
     # 2. Upscaler UNet (256x256)
     if choice in ("2", "3"):
-        if os.path.exists("upscaler_unet_checkpoint.pt"):
-            print("\nЗагрузка существующего чекпоинта Upscaler UNet...")
-            upscaler_model.load_state_dict(torch.load("upscaler_unet_checkpoint.pt", map_location=DEVICE))
+        if os.path.exists(upscaler_ckpt_path):
+            print(f"\nЗагрузка существующего чекпоинта Upscaler UNet из {upscaler_ckpt_path}...")
+            upscaler_model.load_state_dict(torch.load(upscaler_ckpt_path, map_location=DEVICE))
 
         print("\nСтарт Этапа 2: Обучение Upscaler UNet (256x256)...")
         upscale_epochs = args.epochs
@@ -195,7 +204,8 @@ def main():
             avg_loss = running_loss / len(dataloader)
             print(f" Эпоха {epoch+1}/{upscale_epochs} завершена за {format_time(epoch_elapsed)} | Средний Upscaler Loss: {avg_loss:.4f}")
             
-            torch.save(upscaler_model.state_dict(), "upscaler_unet_checkpoint.pt")
+            torch.save(upscaler_model.state_dict(), upscaler_ckpt_path)
+            print(f"Сохранён чекпоинт: {upscaler_ckpt_path}")
             torch.cuda.empty_cache()
             gc.collect()
 
