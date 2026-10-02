@@ -1,0 +1,12 @@
+# Исключаем чекпоинты весов и датасеты
+*.pt
+*.pth
+*.zip
+*.tar.gz
+outputs/
+data/
+datasets/
+__pycache__/
+.venv/
+venv/
+*.png
