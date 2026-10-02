@@ -1,6 +1,7 @@
 import os
 import gc
 import time
+import argparse
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -31,7 +32,6 @@ class CustomFolderDataset(Dataset):
                         
         print(f"Загружено валидных пар картинка+текст: {len(self.samples)}")
 
-        # Быстрый первичный ресайз до 256x256 BILINEAR (чтобы все элементы в батче были равного размера)
         self.transform_base = T.Compose([
             T.Resize((256, 256), interpolation=T.InterpolationMode.BILINEAR),
             T.CenterCrop((256, 256)),
@@ -68,36 +68,45 @@ class CustomFolderDataset(Dataset):
 
 
 def format_time(seconds: float) -> str:
-    """Форматирует секунды в читаемый вид ЧЧ:ММ:СС"""
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
     return f"{h:02d}ч {m:02d}мин {s:02d}сек"
 
 
 def resize_gpu(tensor: torch.Tensor, size: int) -> torch.Tensor:
-    """Быстрый ресайз на стороне GPU"""
     return F.interpolate(tensor, size=(size, size), mode='bicubic', align_corners=False)
 
 
 def main():
-    DATA_DIR = r"C:\datasets\val2017"
+    parser = argparse.ArgumentParser(description="DDPM Training Script")
+    parser.add_argument("--data_dir", type=str, default="./data", help="Путь к датасету")
+    parser.add_argument("--epochs", type=int, default=1, help="Количество эпох")
+    parser.add_argument("--batch_size", type=int, default=8, help="Размер батча")
+    parser.add_argument("--mode", type=str, default=None, choices=["1", "2", "3"], help="Режим обучения (1, 2 или 3)")
+    args = parser.parse_args()
 
-    if not os.path.exists(DATA_DIR):
-        print(f"Ошибка: Папка {DATA_DIR} не найдена!")
+    # Относительный путь от корня проекта по умолчанию
+    data_dir = args.data_dir
+    if not os.path.isabs(data_dir):
+        data_dir = os.path.abspath(data_dir)
+
+    if not os.path.exists(data_dir):
+        print(f"Ошибка: Папка {data_dir} не найдена!")
         return
 
-    print("\n--- Выберите режим обучения ---")
-    print("1 — Только Base UNet (64x64)")
-    print("2 — Только Upscaler UNet (256x256)")
-    print("3 — Оба этапа подряд (Base -> Upscaler)")
-    choice = input("Введите цифру (1, 2 или 3): ").strip()
+    choice = args.mode
+    if not choice:
+        print("\n--- Выберите режим обучения ---")
+        print("1 — Только Base UNet (64x64)")
+        print("2 — Только Upscaler UNet (256x256)")
+        print("3 — Оба этапа подряд (Base -> Upscaler)")
+        choice = input("Введите цифру (1, 2 или 3): ").strip()
 
-    dataset = CustomFolderDataset(DATA_DIR)
+    dataset = CustomFolderDataset(data_dir)
     
-    # 2 воркера обеспечат быструю подгрузку с NVMe без зависаний
     dataloader = DataLoader(
         dataset, 
-        batch_size=8,
+        batch_size=args.batch_size,
         shuffle=True, 
         num_workers=2,
         pin_memory=True if DEVICE == "cuda" else False,
@@ -114,16 +123,14 @@ def main():
 
     total_start_time = time.perf_counter()
 
-    # ----------------------------------------------------
-    # 1. Обучение Base UNet (64x64)
-    # ----------------------------------------------------
+    # 1. Base UNet (64x64)
     if choice in ("1", "3"):
         if os.path.exists("base_unet_checkpoint.pt"):
             print("\nЗагрузка существующего чекпоинта Base UNet...")
             base_model.load_state_dict(torch.load("base_unet_checkpoint.pt", map_location=DEVICE))
 
         print("\nСтарт Этапа 1: Обучение Base UNet (64x64)...")
-        base_epochs = 1
+        base_epochs = args.epochs
 
         for epoch in range(base_epochs):
             epoch_start = time.perf_counter()
@@ -154,16 +161,14 @@ def main():
             torch.cuda.empty_cache()
             gc.collect()
 
-    # ----------------------------------------------------
-    # 2. Обучение Upscaler UNet (256x256)
-    # ----------------------------------------------------
+    # 2. Upscaler UNet (256x256)
     if choice in ("2", "3"):
         if os.path.exists("upscaler_unet_checkpoint.pt"):
             print("\nЗагрузка существующего чекпоинта Upscaler UNet...")
             upscaler_model.load_state_dict(torch.load("upscaler_unet_checkpoint.pt", map_location=DEVICE))
 
         print("\nСтарт Этапа 2: Обучение Upscaler UNet (256x256)...")
-        upscale_epochs = 1
+        upscale_epochs = args.epochs
 
         for epoch in range(upscale_epochs):
             epoch_start = time.perf_counter()
@@ -176,8 +181,8 @@ def main():
             )
             
             for batch in pbar:
-                high_res = batch["image"].to(DEVICE) # Уже 256x256
-                low_res = resize_gpu(high_res, 64)   # Ресайз до 64x64 прямо на GPU
+                high_res = batch["image"].to(DEVICE)
+                low_res = resize_gpu(high_res, 64)
 
                 with torch.amp.autocast('cuda', enabled=(DEVICE == "cuda")):
                     loss = train_upscaler_step(
